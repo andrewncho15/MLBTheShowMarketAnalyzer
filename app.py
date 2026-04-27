@@ -17,6 +17,58 @@ def round_display(df, digits=2):
     return rounded
 
 
+def score_color_style(val, palette):
+    if pd.isna(val):
+        return ""
+    return (
+        f"background-color: {palette['bg']}; "
+        f"color: {palette['fg']}; "
+        "font-weight: 600;"
+    )
+
+
+def style_score_table(df):
+    styler = round_display(df).style
+
+    if "Investment Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#22385a", "fg": "#d7e3f4"}),
+            subset=["Investment Score"],
+        )
+
+    if "Risk Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#5a2b2b", "fg": "#f4d7d7"}),
+            subset=["Risk Score"],
+        )
+
+    if "Risk-Adjusted Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#2d5a38", "fg": "#d9f0dd"}),
+            subset=["Risk-Adjusted Score"],
+        )
+
+    if "Price-Adjusted Value Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#5e4323", "fg": "#f3e2c9"}),
+            subset=["Price-Adjusted Value Score"],
+        )
+
+    if "Affordability Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#5e4323", "fg": "#f3e2c9"}),
+            subset=["Affordability Score"],
+        )
+
+    if "Capital Efficiency Score" in df.columns:
+        styler = styler.map(
+            lambda v: score_color_style(v, {"bg": "#5e4323", "fg": "#f3e2c9"}),
+            subset=["Capital Efficiency Score"],
+        )
+
+    return styler
+
+
 def load_current_market():
     query = """
     select
@@ -325,6 +377,17 @@ def build_summary(history_df):
 
     summary.loc[~eligible, "price_adjusted_value_score"] = pd.NA
 
+    summary["fallback_value_score"] = (
+        summary["affordability_component"] * 0.35
+        + summary["margin_of_safety_component"] * 0.25
+        + summary["liquidity_component"] * 0.15
+        + summary["value_component"] * 0.15
+        + summary["confidence_component"] * 0.10
+    )
+
+    summary["display_value_score"] = summary["price_adjusted_value_score"].copy()
+    summary.loc[summary["display_value_score"].isna(), "display_value_score"] = summary["fallback_value_score"]
+
     return summary.sort_values(
         ["risk_adjusted_score", "investment_score", "pct_change"],
         ascending=[False, False, False],
@@ -336,6 +399,10 @@ def build_market_insights(summary_df):
     insights = []
 
     ranked = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
+    ranked = ranked[
+        (ranked["latest_buy_price"].notna()) &
+        (ranked["latest_buy_price"] > 0)
+    ]
     if ranked.empty:
         return insights
 
@@ -358,17 +425,17 @@ def build_market_insights(summary_df):
             f"Lowest-risk tracked card is {row['item_name']} ({row['set_name']}) with a Risk Score of {row['risk_score']:.2f}/100."
         )
 
-    cheap_alpha = ranked.dropna(subset=["price_adjusted_value_score"]).copy()
+    cheap_alpha = summary_df.dropna(subset=["display_value_score"]).copy()
     cheap_alpha = cheap_alpha[
         (cheap_alpha["latest_buy_price"].notna()) &
         (cheap_alpha["latest_buy_price"] > 0) &
         (cheap_alpha["latest_buy_price"] <= 5000)
-    ].sort_values("price_adjusted_value_score", ascending=False).head(1)
+    ].sort_values("display_value_score", ascending=False).head(1)
 
     if not cheap_alpha.empty:
         row = cheap_alpha.iloc[0]
         insights.append(
-            f"Best lower-cost value target under 5000 stubs is {row['item_name']} ({row['set_name']}) with Price-Adjusted Value Score {row['price_adjusted_value_score']:.2f}/100 and Buy Now price {row['latest_buy_price']:.2f}."
+            f"Best lower-cost value target under 5000 stubs is {row['item_name']} ({row['set_name']}) with Price-Adjusted Value Score {row['display_value_score']:.2f}/100 and Buy Now price {row['latest_buy_price']:.2f}."
         )
 
     return insights
@@ -398,14 +465,14 @@ ranked_df = ranked_df[
 ]
 top_10_df = ranked_df.head(10).copy()
 
-price_adjusted_df = summary_df.dropna(subset=["price_adjusted_value_score"]).copy()
+price_adjusted_df = summary_df.copy()
 price_adjusted_df = price_adjusted_df[
     (price_adjusted_df["latest_buy_price"].notna()) &
     (price_adjusted_df["latest_buy_price"] > 0) &
     (price_adjusted_df["latest_buy_price"] <= 5000)
 ]
 price_adjusted_df = price_adjusted_df.sort_values(
-    ["price_adjusted_value_score", "investment_score", "latest_buy_price"],
+    ["display_value_score", "investment_score", "latest_buy_price"],
     ascending=[False, False, True],
     na_position="last",
 )
@@ -443,11 +510,11 @@ with top_bar_right:
 
 st.subheader("Top 10 Investment Targets")
 st.caption(
-    "Ranked on normalized momentum, value, consistency, stability, timing, liquidity, and history confidence. Scores are scaled 0-100."
+    "Ranked on normalized momentum, value, consistency, stability, timing, liquidity, and history confidence. Only cards with an active Buy Now price are included."
 )
 
 if top_10_df.empty:
-    st.info("Not enough history yet to build robust investment rankings.")
+    st.info("Not enough purchasable cards with sufficient history to build investment rankings.")
 else:
     display_top_10 = top_10_df[
         [
@@ -485,11 +552,11 @@ else:
         }
     )
 
-    st.dataframe(round_display(display_top_10), use_container_width=True)
+    st.dataframe(style_score_table(display_top_10), use_container_width=True)
 
 st.subheader("Top 10 Price-Adjusted Value Targets")
 st.caption(
-    "Only cards with a Buy Now price between 0 and 5000 stubs are included here. This ranking favors cheaper cards with strong quality per unit of capital."
+    "Only cards with a Buy Now price above 0 and at or below 5000 stubs are included here. This ranking favors cheaper cards with strong quality per unit of capital."
 )
 
 if price_adjusted_top_10.empty:
@@ -508,7 +575,7 @@ else:
             "capital_efficiency_component",
             "investment_score",
             "risk_score",
-            "price_adjusted_value_score",
+            "display_value_score",
         ]
     ].copy()
 
@@ -525,11 +592,11 @@ else:
             "capital_efficiency_component": "Capital Efficiency Score",
             "investment_score": "Investment Score",
             "risk_score": "Risk Score",
-            "price_adjusted_value_score": "Price-Adjusted Value Score",
+            "display_value_score": "Price-Adjusted Value Score",
         }
     )
 
-    st.dataframe(round_display(display_price_adjusted), use_container_width=True)
+    st.dataframe(style_score_table(display_price_adjusted), use_container_width=True)
 
 st.subheader("How The Scores Work")
 
@@ -643,7 +710,7 @@ analysis_df = summary_df[
         "history_points",
         "investment_score",
         "risk_score",
-        "price_adjusted_value_score",
+        "display_value_score",
     ]
 ].copy()
 
@@ -663,11 +730,11 @@ analysis_df = analysis_df.rename(
         "history_points": "Snapshots",
         "investment_score": "Investment Score",
         "risk_score": "Risk Score",
-        "price_adjusted_value_score": "Price-Adjusted Value Score",
+        "display_value_score": "Price-Adjusted Value Score",
     }
 )
 
-st.dataframe(round_display(analysis_df), use_container_width=True)
+st.dataframe(style_score_table(analysis_df), use_container_width=True)
 
 st.subheader("Price History Search")
 st.caption("Click the dropdown and start typing for autocomplete suggestions.")
@@ -727,7 +794,7 @@ if selected_display:
         )
         score_col4.metric(
             "Price-Adjusted Value Score",
-            f"{row['price_adjusted_value_score']:.2f}" if pd.notna(row["price_adjusted_value_score"]) else "N/A",
+            f"{row['display_value_score']:.2f}" if pd.notna(row["display_value_score"]) else "N/A",
         )
 
     if player_history.empty:
