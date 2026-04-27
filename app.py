@@ -5,6 +5,8 @@ from db import get_connection
 
 st.set_page_config(page_title="MLB The Show Market Dashboard", layout="wide")
 
+COVER_IMAGE_PATH = "mlb_the_show_26_cover.jpg"
+
 
 def round_display(df, digits=2):
     rounded = df.copy()
@@ -329,16 +331,37 @@ ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
 top_10_df = ranked_df.head(10).copy()
 insights = build_market_insights(summary_df)
 
+st.image(COVER_IMAGE_PATH, use_container_width=True)
 st.title("MLB The Show Market Dashboard")
 st.caption("Risk-adjusted market analytics powered by Neon Postgres")
 
 top_riser_df = summary_df.dropna(subset=["pct_change"]).sort_values("pct_change", ascending=False)
-metric_col = st.columns(1)[0]
-if not top_riser_df.empty:
-    top_riser = top_riser_df.iloc[0]
-    metric_col.metric("Top riser", top_riser["item_name"], f"{top_riser['pct_change']:.2f}%")
-else:
-    metric_col.metric("Top riser", "Not enough history yet", "")
+
+top_bar_left, top_bar_right = st.columns([3, 1])
+
+with top_bar_left:
+    st.markdown(
+        """
+        <div style="
+            padding: 14px 18px;
+            border-radius: 14px;
+            background: linear-gradient(90deg, #0f1724, #1c2940);
+            border: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 10px;
+        ">
+            <div style="font-size:14px; color:#9fb3c8;">Live Market Intelligence</div>
+            <div style="font-size:24px; font-weight:700; color:#ffffff;">Track price momentum, risk, and opportunity across the MLB The Show market.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with top_bar_right:
+    if not top_riser_df.empty:
+        top_riser = top_riser_df.iloc[0]
+        st.metric("Top riser", top_riser["item_name"], f"{top_riser['pct_change']:.2f}%")
+    else:
+        st.metric("Top riser", "Not enough history yet", "")
 
 st.subheader("Top 10 Investment Targets")
 st.caption(
@@ -383,6 +406,73 @@ else:
     )
 
     st.dataframe(round_display(display_top_10), use_container_width=True)
+
+st.subheader("How The Scores Work")
+
+score_col1, score_col2, score_col3 = st.columns(3)
+
+with score_col1:
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #18253a, #22385a);
+            padding: 18px;
+            border-radius: 16px;
+            min-height: 180px;
+            border: 1px solid rgba(255,255,255,0.08);
+        ">
+            <h4 style="margin-top:0; color:#ffffff;">Investment Score</h4>
+            <p style="color:#d7e3f4; font-size:15px; line-height:1.5;">
+                Measures upside potential using normalized momentum, value versus historical average,
+                trend consistency, timing within the observed range, spread opportunity, and snapshot depth.
+            </p>
+            <p style="color:#8ec5ff; font-weight:600; margin-bottom:0;">Scale: 0 to 100</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with score_col2:
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #3a1d1d, #5a2b2b);
+            padding: 18px;
+            border-radius: 16px;
+            min-height: 180px;
+            border: 1px solid rgba(255,255,255,0.08);
+        ">
+            <h4 style="margin-top:0; color:#ffffff;">Risk Score</h4>
+            <p style="color:#f4d7d7; font-size:15px; line-height:1.5;">
+                Measures downside exposure using relative volatility, downside volatility,
+                max drawdown, spread risk, and limited history risk.
+            </p>
+            <p style="color:#ffb3b3; font-weight:600; margin-bottom:0;">Scale: 0 to 100</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with score_col3:
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #1f3a24, #2d5a38);
+            padding: 18px;
+            border-radius: 16px;
+            min-height: 180px;
+            border: 1px solid rgba(255,255,255,0.08);
+        ">
+            <h4 style="margin-top:0; color:#ffffff;">Risk-Adjusted Score</h4>
+            <p style="color:#d9f0dd; font-size:15px; line-height:1.5;">
+                Combines opportunity and danger by rewarding strong investments while penalizing
+                unstable, high-risk cards. This is the best single ranking for balanced decisions.
+            </p>
+            <p style="color:#9ff0b0; font-weight:600; margin-bottom:0;">Higher is better</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.subheader("Market Insights")
 if insights:
