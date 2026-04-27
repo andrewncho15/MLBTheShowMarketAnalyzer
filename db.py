@@ -8,11 +8,20 @@ load_dotenv()
 
 def get_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Create a .env file and add your Neon connection string."
-        )
-    return database_url
+    if database_url:
+        return database_url
+
+    try:
+        import streamlit as st
+
+        if "DATABASE_URL" in st.secrets:
+            return st.secrets["DATABASE_URL"]
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "DATABASE_URL is not set. Add it to your local .env or Streamlit secrets."
+    )
 
 
 def get_connection():
