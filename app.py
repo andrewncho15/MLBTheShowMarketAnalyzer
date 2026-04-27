@@ -358,13 +358,17 @@ def build_market_insights(summary_df):
             f"Lowest-risk tracked card is {row['item_name']} ({row['set_name']}) with a Risk Score of {row['risk_score']:.2f}/100."
         )
 
-    cheap_alpha = ranked.dropna(subset=["price_adjusted_value_score"]).sort_values(
-        "price_adjusted_value_score", ascending=False
-    ).head(1)
+    cheap_alpha = ranked.dropna(subset=["price_adjusted_value_score"]).copy()
+    cheap_alpha = cheap_alpha[
+        (cheap_alpha["latest_buy_price"].notna()) &
+        (cheap_alpha["latest_buy_price"] > 0) &
+        (cheap_alpha["latest_buy_price"] <= 5000)
+    ].sort_values("price_adjusted_value_score", ascending=False).head(1)
+
     if not cheap_alpha.empty:
         row = cheap_alpha.iloc[0]
         insights.append(
-            f"Best lower-cost value target is {row['item_name']} ({row['set_name']}) with Price-Adjusted Value Score {row['price_adjusted_value_score']:.2f}/100 and Buy Now price {row['latest_buy_price']:.2f}."
+            f"Best lower-cost value target under 5000 stubs is {row['item_name']} ({row['set_name']}) with Price-Adjusted Value Score {row['price_adjusted_value_score']:.2f}/100 and Buy Now price {row['latest_buy_price']:.2f}."
         )
 
     return insights
@@ -391,6 +395,11 @@ ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
 top_10_df = ranked_df.head(10).copy()
 
 price_adjusted_df = summary_df.dropna(subset=["price_adjusted_value_score"]).copy()
+price_adjusted_df = price_adjusted_df[
+    (price_adjusted_df["latest_buy_price"].notna()) &
+    (price_adjusted_df["latest_buy_price"] > 0) &
+    (price_adjusted_df["latest_buy_price"] <= 5000)
+]
 price_adjusted_df = price_adjusted_df.sort_values(
     ["price_adjusted_value_score", "investment_score", "latest_buy_price"],
     ascending=[False, False, True],
@@ -476,11 +485,11 @@ else:
 
 st.subheader("Top 10 Price-Adjusted Value Targets")
 st.caption(
-    "This ranking favors cheaper cards with strong quality per unit of capital, using affordability, capital efficiency, margin of safety, stability, and risk-adjusted strength."
+    "Only cards with a Buy Now price between 0 and 5000 stubs are included here. This ranking favors cheaper cards with strong quality per unit of capital."
 )
 
 if price_adjusted_top_10.empty:
-    st.info("Not enough history yet to calculate price-adjusted targets.")
+    st.info("No qualifying lower-cost value targets are available right now.")
 else:
     display_price_adjusted = price_adjusted_top_10[
         [
