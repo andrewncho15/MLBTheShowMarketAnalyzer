@@ -392,6 +392,10 @@ if summary_df.empty:
     st.stop()
 
 ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
+ranked_df = ranked_df[
+    (ranked_df["latest_buy_price"].notna()) &
+    (ranked_df["latest_buy_price"] > 0)
+]
 top_10_df = ranked_df.head(10).copy()
 
 price_adjusted_df = summary_df.dropna(subset=["price_adjusted_value_score"]).copy()
