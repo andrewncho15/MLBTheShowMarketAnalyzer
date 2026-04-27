@@ -5,7 +5,7 @@ from db import get_connection
 
 st.set_page_config(page_title="MLB The Show Market Dashboard", layout="wide")
 
-COVER_IMAGE_PATH = "mlb_the_show_26_cover.jpg"
+COVER_IMAGE_PATH = "assets/mlb_the_show_26_cover.jpg"
 
 
 def round_display(df, digits=2):
@@ -18,17 +18,19 @@ def round_display(df, digits=2):
 def load_current_market():
     query = """
     select
-        uuid,
-        item_name,
-        team,
-        overall,
-        best_buy_price,
-        best_sell_price,
-        spread,
-        margin_pct,
-        snapshot_at
-    from analytics.market_snapshot
-    order by best_sell_price desc nulls last
+        m.uuid,
+        m.item_name,
+        i.series as set_name,
+        m.team,
+        m.overall,
+        m.best_buy_price,
+        m.best_sell_price,
+        m.spread,
+        m.margin_pct,
+        m.snapshot_at
+    from analytics.market_snapshot m
+    left join staging.items i using (uuid)
+    order by m.best_sell_price desc nulls last
     """
     with get_connection() as conn:
         return pd.read_sql(query, conn)
@@ -39,6 +41,7 @@ def load_price_history():
     select
         h.uuid,
         coalesce(i.player_name, i.name) as item_name,
+        i.series as set_name,
         i.team,
         i.overall,
         h.pulled_at,
@@ -122,8 +125,8 @@ def build_summary(history_df):
 
     rows = []
 
-    for (uuid, item_name, team, overall), group in df.groupby(
-        ["uuid", "item_name", "team", "overall"], dropna=False
+    for (uuid, item_name, set_name, team, overall), group in df.groupby(
+        ["uuid", "item_name", "set_name", "team", "overall"], dropna=False
     ):
         group = group.sort_values("pulled_at").copy()
         group["mid_return"] = group["mid_price"].pct_change() * 100
@@ -179,6 +182,7 @@ def build_summary(history_df):
             {
                 "uuid": uuid,
                 "item_name": item_name,
+                "set_name": set_name,
                 "team": team,
                 "overall": overall,
                 "history_points": history_points,
@@ -210,6 +214,7 @@ def build_summary(history_df):
     if summary.empty:
         return summary
 
+    summary["set_name"] = summary["set_name"].fillna("Unknown")
     summary["enough_history"] = summary["history_points"] >= 3
 
     eligible = summary["enough_history"]
@@ -296,28 +301,28 @@ def build_market_insights(summary_df):
 
     best = ranked.iloc[0]
     insights.append(
-        f"Best risk-adjusted target is {best['item_name']} with Investment Score {best['investment_score']:.2f}/100 and Risk Score {best['risk_score']:.2f}/100."
+        f"Best risk-adjusted target is {best['item_name']} ({best['set_name']}) with Investment Score {best['investment_score']:.2f}/100 and Risk Score {best['risk_score']:.2f}/100."
     )
 
     undervalued = ranked.sort_values("discount_from_avg_pct", ascending=False).head(1)
     if not undervalued.empty and pd.notna(undervalued.iloc[0]["discount_from_avg_pct"]):
         row = undervalued.iloc[0]
         insights.append(
-            f"Most undervalued tracked card is {row['item_name']}, trading {row['discount_from_avg_pct']:.2f}% below its observed average price."
+            f"Most undervalued tracked card is {row['item_name']} ({row['set_name']}), trading {row['discount_from_avg_pct']:.2f}% below its observed average price."
         )
 
     stable = ranked.sort_values("risk_score", ascending=True).head(1)
     if not stable.empty:
         row = stable.iloc[0]
         insights.append(
-            f"Lowest-risk tracked card is {row['item_name']} with a Risk Score of {row['risk_score']:.2f}/100."
+            f"Lowest-risk tracked card is {row['item_name']} ({row['set_name']}) with a Risk Score of {row['risk_score']:.2f}/100."
         )
 
     momentum = ranked.sort_values("pct_change", ascending=False).head(1)
     if not momentum.empty and pd.notna(momentum.iloc[0]["pct_change"]):
         row = momentum.iloc[0]
         insights.append(
-            f"Strongest recent broad trend belongs to {row['item_name']} at {row['pct_change']:.2f}% total observed appreciation."
+            f"Strongest recent broad trend belongs to {row['item_name']} ({row['set_name']}) at {row['pct_change']:.2f}% total observed appreciation."
         )
 
     return insights
@@ -374,6 +379,7 @@ else:
     display_top_10 = top_10_df[
         [
             "item_name",
+            "set_name",
             "team",
             "overall",
             "history_points",
@@ -391,6 +397,7 @@ else:
     display_top_10 = display_top_10.rename(
         columns={
             "item_name": "Player",
+            "set_name": "Set",
             "team": "Team",
             "overall": "Overall",
             "history_points": "Snapshots",
@@ -485,6 +492,7 @@ st.subheader("Current Market Analysis")
 analysis_df = summary_df[
     [
         "item_name",
+        "set_name",
         "team",
         "overall",
         "latest_buy_price",
@@ -503,6 +511,7 @@ analysis_df = summary_df[
 analysis_df = analysis_df.rename(
     columns={
         "item_name": "Player",
+        "set_name": "Set",
         "team": "Team",
         "overall": "Overall",
         "latest_buy_price": "Buy Now",
@@ -521,24 +530,45 @@ analysis_df = analysis_df.rename(
 st.dataframe(round_display(analysis_df), use_container_width=True)
 
 st.subheader("Price History Search")
-player_names = sorted([name for name in history_df["item_name"].dropna().unique().tolist() if name])
+st.caption("Click the dropdown and start typing for autocomplete suggestions.")
 
-search_text = st.text_input("Search for a player", placeholder="Type a player name...")
-filtered_names = [name for name in player_names if search_text.lower() in name.lower()] if search_text else player_names
+player_options = (
+    history_df[["item_name", "set_name"]]
+    .dropna(subset=["item_name"])
+    .drop_duplicates()
+    .fillna("Unknown")
+)
 
-if not filtered_names:
-    st.warning("No players match that search.")
-else:
-    selected_player = st.selectbox("Select a player", filtered_names)
+player_options["display_name"] = player_options["item_name"] + " (" + player_options["set_name"] + ")"
+player_options = player_options.sort_values("display_name")
 
-    player_history = history_df[history_df["item_name"] == selected_player].copy()
+selected_display = st.selectbox(
+    "Search and select a player",
+    player_options["display_name"].tolist(),
+    index=None,
+    placeholder="Start typing a player name...",
+)
+
+if selected_display:
+    selected_row = player_options[player_options["display_name"] == selected_display].iloc[0]
+    selected_player = selected_row["item_name"]
+    selected_set = selected_row["set_name"]
+
+    player_history = history_df[
+        (history_df["item_name"] == selected_player) &
+        (history_df["set_name"].fillna("Unknown") == selected_set)
+    ].copy()
+
     player_history["best_buy_price"] = pd.to_numeric(player_history["best_buy_price"], errors="coerce")
     player_history["best_sell_price"] = pd.to_numeric(player_history["best_sell_price"], errors="coerce")
     player_history["mid_price"] = (
         player_history["best_buy_price"] + player_history["best_sell_price"]
     ) / 2
 
-    player_summary = summary_df[summary_df["item_name"] == selected_player].head(1)
+    player_summary = summary_df[
+        (summary_df["item_name"] == selected_player) &
+        (summary_df["set_name"].fillna("Unknown") == selected_set)
+    ].head(1)
 
     if not player_summary.empty:
         row = player_summary.iloc[0]
@@ -566,11 +596,12 @@ else:
         )
 
         history_display = player_history[
-            ["pulled_at", "item_name", "team", "overall", "best_buy_price", "best_sell_price", "mid_price"]
+            ["pulled_at", "item_name", "set_name", "team", "overall", "best_buy_price", "best_sell_price", "mid_price"]
         ].rename(
             columns={
                 "pulled_at": "Timestamp",
                 "item_name": "Player",
+                "set_name": "Set",
                 "team": "Team",
                 "overall": "Overall",
                 "best_buy_price": "Buy Now",
