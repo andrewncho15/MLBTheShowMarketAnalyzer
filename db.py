@@ -1,9 +1,6 @@
 import os
 
-from dotenv import load_dotenv
 import psycopg
-
-load_dotenv()
 
 
 def get_database_url() -> str:
@@ -13,14 +10,13 @@ def get_database_url() -> str:
 
     try:
         import streamlit as st
-
         if "DATABASE_URL" in st.secrets:
             return st.secrets["DATABASE_URL"]
     except Exception:
         pass
 
     raise RuntimeError(
-        "DATABASE_URL is not set. Add it to your local .env or Streamlit secrets."
+        "DATABASE_URL is not set. Add it to Streamlit secrets or your local environment."
     )
 
 
