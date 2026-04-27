@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 import streamlit as st
 
@@ -285,6 +287,44 @@ def build_summary(history_df):
     summary["risk_adjusted_score"] = summary["investment_score"] - (summary["risk_score"] * 0.35)
     summary.loc[~eligible, "risk_adjusted_score"] = pd.NA
 
+    summary["risk_adjusted_component"] = percentile_rank(
+        summary["risk_adjusted_score"].fillna(0), ascending=True
+    )
+
+    summary["affordability_component"] = 100 - percentile_rank(
+        summary["latest_buy_price"].fillna(summary["latest_mid_price"]).fillna(0),
+        ascending=True,
+    )
+
+    summary["margin_of_safety_component"] = percentile_rank(
+        summary["discount_from_avg_pct"].clip(lower=0).fillna(0), ascending=True
+    )
+
+    summary["expected_upside_pct"] = (
+        summary["pct_change"].clip(lower=0).fillna(0) * 0.40
+        + summary["discount_from_avg_pct"].clip(lower=0).fillna(0) * 0.35
+        + summary["spread_pct"].clip(lower=0).fillna(0) * 0.25
+    )
+
+    summary["price_scale"] = summary["latest_buy_price"].apply(
+        lambda x: math.log1p(x) if pd.notna(x) and x > 0 else None
+    )
+
+    summary["capital_efficiency_raw"] = summary["expected_upside_pct"] / summary["price_scale"]
+    summary["capital_efficiency_component"] = percentile_rank(
+        summary["capital_efficiency_raw"].fillna(0), ascending=True
+    )
+
+    summary["price_adjusted_value_score"] = (
+        summary["risk_adjusted_component"] * 0.30
+        + summary["affordability_component"] * 0.25
+        + summary["capital_efficiency_component"] * 0.20
+        + summary["margin_of_safety_component"] * 0.15
+        + summary["stability_component"] * 0.10
+    )
+
+    summary.loc[~eligible, "price_adjusted_value_score"] = pd.NA
+
     return summary.sort_values(
         ["risk_adjusted_score", "investment_score", "pct_change"],
         ascending=[False, False, False],
@@ -318,11 +358,13 @@ def build_market_insights(summary_df):
             f"Lowest-risk tracked card is {row['item_name']} ({row['set_name']}) with a Risk Score of {row['risk_score']:.2f}/100."
         )
 
-    momentum = ranked.sort_values("pct_change", ascending=False).head(1)
-    if not momentum.empty and pd.notna(momentum.iloc[0]["pct_change"]):
-        row = momentum.iloc[0]
+    cheap_alpha = ranked.dropna(subset=["price_adjusted_value_score"]).sort_values(
+        "price_adjusted_value_score", ascending=False
+    ).head(1)
+    if not cheap_alpha.empty:
+        row = cheap_alpha.iloc[0]
         insights.append(
-            f"Strongest recent broad trend belongs to {row['item_name']} ({row['set_name']}) at {row['pct_change']:.2f}% total observed appreciation."
+            f"Best lower-cost value target is {row['item_name']} ({row['set_name']}) with Price-Adjusted Value Score {row['price_adjusted_value_score']:.2f}/100 and Buy Now price {row['latest_buy_price']:.2f}."
         )
 
     return insights
@@ -332,10 +374,6 @@ current_df = load_current_market()
 history_df = load_price_history()
 summary_df = build_summary(history_df)
 
-ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
-top_10_df = ranked_df.head(10).copy()
-insights = build_market_insights(summary_df)
-
 header_col1, header_col2 = st.columns([1, 5])
 
 with header_col1:
@@ -344,6 +382,23 @@ with header_col1:
 with header_col2:
     st.title("MLB The Show Market Dashboard")
     st.caption("Risk-adjusted market analytics powered by Neon Postgres")
+
+if summary_df.empty:
+    st.warning("No market history is loaded yet.")
+    st.stop()
+
+ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
+top_10_df = ranked_df.head(10).copy()
+
+price_adjusted_df = summary_df.dropna(subset=["price_adjusted_value_score"]).copy()
+price_adjusted_df = price_adjusted_df.sort_values(
+    ["price_adjusted_value_score", "investment_score", "latest_buy_price"],
+    ascending=[False, False, True],
+    na_position="last",
+)
+price_adjusted_top_10 = price_adjusted_df.head(10).copy()
+
+insights = build_market_insights(summary_df)
 
 top_riser_df = summary_df.dropna(subset=["pct_change"]).sort_values("pct_change", ascending=False)
 
@@ -419,9 +474,53 @@ else:
 
     st.dataframe(round_display(display_top_10), use_container_width=True)
 
+st.subheader("Top 10 Price-Adjusted Value Targets")
+st.caption(
+    "This ranking favors cheaper cards with strong quality per unit of capital, using affordability, capital efficiency, margin of safety, stability, and risk-adjusted strength."
+)
+
+if price_adjusted_top_10.empty:
+    st.info("Not enough history yet to calculate price-adjusted targets.")
+else:
+    display_price_adjusted = price_adjusted_top_10[
+        [
+            "item_name",
+            "set_name",
+            "team",
+            "overall",
+            "latest_buy_price",
+            "latest_sell_price",
+            "expected_upside_pct",
+            "affordability_component",
+            "capital_efficiency_component",
+            "investment_score",
+            "risk_score",
+            "price_adjusted_value_score",
+        ]
+    ].copy()
+
+    display_price_adjusted = display_price_adjusted.rename(
+        columns={
+            "item_name": "Player",
+            "set_name": "Set",
+            "team": "Team",
+            "overall": "Overall",
+            "latest_buy_price": "Buy Now",
+            "latest_sell_price": "Sell Now",
+            "expected_upside_pct": "Expected Upside %",
+            "affordability_component": "Affordability Score",
+            "capital_efficiency_component": "Capital Efficiency Score",
+            "investment_score": "Investment Score",
+            "risk_score": "Risk Score",
+            "price_adjusted_value_score": "Price-Adjusted Value Score",
+        }
+    )
+
+    st.dataframe(round_display(display_price_adjusted), use_container_width=True)
+
 st.subheader("How The Scores Work")
 
-score_col1, score_col2, score_col3 = st.columns(3)
+score_col1, score_col2, score_col3, score_col4 = st.columns(4)
 
 with score_col1:
     st.markdown(
@@ -430,7 +529,7 @@ with score_col1:
             background: linear-gradient(135deg, #18253a, #22385a);
             padding: 18px;
             border-radius: 16px;
-            min-height: 180px;
+            min-height: 200px;
             border: 1px solid rgba(255,255,255,0.08);
         ">
             <h4 style="margin-top:0; color:#ffffff;">Investment Score</h4>
@@ -451,7 +550,7 @@ with score_col2:
             background: linear-gradient(135deg, #3a1d1d, #5a2b2b);
             padding: 18px;
             border-radius: 16px;
-            min-height: 180px;
+            min-height: 200px;
             border: 1px solid rgba(255,255,255,0.08);
         ">
             <h4 style="margin-top:0; color:#ffffff;">Risk Score</h4>
@@ -472,7 +571,7 @@ with score_col3:
             background: linear-gradient(135deg, #1f3a24, #2d5a38);
             padding: 18px;
             border-radius: 16px;
-            min-height: 180px;
+            min-height: 200px;
             border: 1px solid rgba(255,255,255,0.08);
         ">
             <h4 style="margin-top:0; color:#ffffff;">Risk-Adjusted Score</h4>
@@ -481,6 +580,27 @@ with score_col3:
                 unstable, high-risk cards. This is the best single ranking for balanced decisions.
             </p>
             <p style="color:#9ff0b0; font-weight:600; margin-bottom:0;">Higher is better</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with score_col4:
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #3b2a16, #5e4323);
+            padding: 18px;
+            border-radius: 16px;
+            min-height: 200px;
+            border: 1px solid rgba(255,255,255,0.08);
+        ">
+            <h4 style="margin-top:0; color:#ffffff;">Price-Adjusted Value Score</h4>
+            <p style="color:#f3e2c9; font-size:15px; line-height:1.5;">
+                Favors cards that combine strong investment quality with lower capital requirements,
+                using affordability, capital efficiency, margin of safety, stability, and risk-adjusted strength.
+            </p>
+            <p style="color:#f5c67a; font-weight:600; margin-bottom:0;">Best for cheaper targets</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -510,6 +630,7 @@ analysis_df = summary_df[
         "history_points",
         "investment_score",
         "risk_score",
+        "price_adjusted_value_score",
     ]
 ].copy()
 
@@ -529,6 +650,7 @@ analysis_df = analysis_df.rename(
         "history_points": "Snapshots",
         "investment_score": "Investment Score",
         "risk_score": "Risk Score",
+        "price_adjusted_value_score": "Price-Adjusted Value Score",
     }
 )
 
@@ -577,7 +699,7 @@ if selected_display:
 
     if not player_summary.empty:
         row = player_summary.iloc[0]
-        score_col1, score_col2, score_col3 = st.columns(3)
+        score_col1, score_col2, score_col3, score_col4 = st.columns(4)
         score_col1.metric(
             "Investment Score",
             f"{row['investment_score']:.2f}" if pd.notna(row["investment_score"]) else "N/A",
@@ -587,8 +709,12 @@ if selected_display:
             f"{row['risk_score']:.2f}" if pd.notna(row["risk_score"]) else "N/A",
         )
         score_col3.metric(
-            "% Change",
-            f"{row['pct_change']:.2f}%" if pd.notna(row["pct_change"]) else "N/A",
+            "Risk-Adjusted Score",
+            f"{row['risk_adjusted_score']:.2f}" if pd.notna(row["risk_adjusted_score"]) else "N/A",
+        )
+        score_col4.metric(
+            "Price-Adjusted Value Score",
+            f"{row['price_adjusted_value_score']:.2f}" if pd.notna(row["price_adjusted_value_score"]) else "N/A",
         )
 
     if player_history.empty:
