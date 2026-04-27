@@ -336,9 +336,14 @@ ranked_df = summary_df.dropna(subset=["risk_adjusted_score"]).copy()
 top_10_df = ranked_df.head(10).copy()
 insights = build_market_insights(summary_df)
 
-st.image(COVER_IMAGE_PATH, use_container_width=True)
-st.title("MLB The Show Market Dashboard")
-st.caption("Risk-adjusted market analytics powered by Neon Postgres")
+header_col1, header_col2 = st.columns([1, 5])
+
+with header_col1:
+    st.image(COVER_IMAGE_PATH, width=180)
+
+with header_col2:
+    st.title("MLB The Show Market Dashboard")
+    st.caption("Risk-adjusted market analytics powered by Neon Postgres")
 
 top_riser_df = summary_df.dropna(subset=["pct_change"]).sort_values("pct_change", ascending=False)
 
